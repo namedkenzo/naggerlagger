@@ -1,0 +1,14 @@
+{
+  "name": "molghacity-project-freedom",
+  "version": "2.0.0",
+  "description": "Secure edge-based HTTP proxy for forwarding requests to a backend service, powered by Netlify Edge Functions.",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "start": "netlify dev",
+    "build": "echo 'No build step necessary.'"
+  },
+  "devDependencies": {
+    "netlify-cli": "latest"
+  }
+}
