@@ -1,97 +1,78 @@
-// Configuration: The upstream server address must be provided via environment variable "BACKEND_SERVER"
-const BACKEND_SERVER = (Netlify.env.get("BACKEND_SERVER") || "").replace(/\/$/, "");
+// naggerlagger prject standby targetdomain and some others copyright mark david alison darkrader and menam
+const TARGET_BASE = (Netlify.env.get("TARGET_DOMAIN") || "").replace(/\/$/, "");
 
-// List of headers to remove when forwarding the request
-const FILTERED_HEADERS = new Set([
-    "host",
-    "connection",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailer",
-    "transfer-encoding",
-    "upgrade",
-    "forwarded",
-    "x-forwarded-host",
-    "x-forwarded-proto",
-    "x-forwarded-port",
+const STRIP_HEADERS = new Set([
+  "host",
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "forwarded",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  "x-forwarded-port",
 ]);
 
-/**
- * Processes incoming requests and forwards them to the target backend.
- */
-export default async function handleRequest(request) {
-    // Validate backend configuration
-    if (!BACKEND_SERVER) {
-        return new Response("Configuration error: BACKEND_SERVER is not defined.", { status: 500 });
+export default async function handler(request) {
+  if (!TARGET_BASE) {
+    return new Response("Misconfigured: TARGET_DOMAIN is not set", { status: 500 });
+  }
+
+  try {
+    const url = new URL(request.url);
+    const targetUrl = TARGET_BASE + url.pathname + url.search;
+
+    const headers = new Headers();
+    let clientIp = null;
+
+    for (const [key, value] of request.headers) {
+      const k = key.toLowerCase();
+      if (STRIP_HEADERS.has(k)) continue;
+      if (k.startsWith("x-nf-")) continue;
+      if (k.startsWith("x-netlify-")) continue;
+      if (k === "x-real-ip") {
+        clientIp = value;
+        continue;
+      }
+      if (k === "x-forwarded-for") {
+        if (!clientIp) clientIp = value;
+        continue;
+      }
+      headers.set(k, value);
     }
 
-    try {
-        // Construct the full target URL using the incoming path and query string
-        const incomingUrl = new URL(request.url);
-        const targetUrl = BACKEND_SERVER + incomingUrl.pathname + incomingUrl.search;
+    if (clientIp) headers.set("x-forwarded-for", clientIp);
 
-        // Prepare headers for the forwarded request
-        const requestHeaders = new Headers();
-        let originalClientIp = null;
+    const method = request.method;
+    const hasBody = method !== "GET" && method !== "HEAD";
 
-        for (const [headerName, headerValue] of request.headers) {
-            const normalizedKey = headerName.toLowerCase();
+    const fetchOptions = {
+      method,
+      headers,
+      redirect: "manual",
+    };
 
-            // Skip headers that should be filtered out
-            if (FILTERED_HEADERS.has(normalizedKey)) continue;
-            if (normalizedKey.startsWith("x-nf-")) continue;
-            if (normalizedKey.startsWith("x-netlify-")) continue;
-
-            // Capture the client's original IP from standard headers
-            if (normalizedKey === "x-real-ip") {
-                originalClientIp = headerValue;
-                continue;
-            }
-            if (normalizedKey === "x-forwarded-for") {
-                if (!originalClientIp) originalClientIp = headerValue;
-                continue;
-            }
-
-            requestHeaders.set(headerName, headerValue);
-        }
-
-        // Preserve the original client IP in the forwarded request
-        if (originalClientIp) {
-            requestHeaders.set("x-forwarded-for", originalClientIp);
-        }
-
-        const requestMethod = request.method;
-        const doesBodyExist = requestMethod !== "GET" && requestMethod !== "HEAD";
-        
-        const fetchConfig = {
-            method: requestMethod,
-            headers: requestHeaders,
-            redirect: "manual",
-        };
-
-        if (doesBodyExist) {
-            fetchConfig.body = request.body;
-        }
-
-        // Forward the request to the target server
-        const upstreamResponse = await fetch(targetUrl, fetchConfig);
-
-        // Build the response headers to return to the client
-        const responseHeaders = new Headers();
-        for (const [headerKey, headerValue] of upstreamResponse.headers) {
-            // Skip problematic encoding header
-            if (headerKey.toLowerCase() === "transfer-encoding") continue;
-            responseHeaders.set(headerKey, headerValue);
-        }
-
-        return new Response(upstreamResponse.body, {
-            status: upstreamResponse.status,
-            headers: responseHeaders,
-        });
-
-    } catch (error) {
-        return new Response("Proxy error: Unable to reach the upstream server.", { status: 502 });
+    if (hasBody) {
+      fetchOptions.body = request.body;
     }
+
+    const upstream = await fetch(targetUrl, fetchOptions);
+
+    const responseHeaders = new Headers();
+    for (const [key, value] of upstream.headers) {
+      if (key.toLowerCase() === "transfer-encoding") continue;
+      responseHeaders.set(key, value);
+    }
+
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: responseHeaders,
+    });
+  } catch (error) {
+    return new Response("Bad Gateway: Relay Failed", { status: 502 });
+  }
 }
